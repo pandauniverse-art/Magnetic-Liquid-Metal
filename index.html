@@ -3,474 +3,365 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Panda Universe - The Reality Tear (UPGRADED Vibe & Ink Spread)</title>
+    <title>Panda Universe - The Ink of Reality (Cinematic)</title>
     <style>
-        body { 
-            margin: 0; overflow: hidden; background-color: #000; 
-            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-            touch-action: none;
-        }
-        
-        /* 3D 우주 배경 레이어 */
-        #webgl-container {
-            position: fixed;
-            top: 0; left: 0;
-            width: 100vw; height: 100vh;
-            z-index: 1;
-        }
-
-        /* 2D 하얀색 웹사이트 레이어 (번지는 캔버스) */
-        #overlay-canvas {
-            position: fixed;
-            top: 0; left: 0;
-            width: 100vw; height: 100vh;
-            z-index: 2;
-            cursor: crosshair;
-        }
-
-        /* 안내 문구 (최상단) */
-        #hint {
-            position: fixed;
-            bottom: 30px; width: 100%; text-align: center;
-            color: #000; font-size: 12px; letter-spacing: 3px; font-weight: bold;
-            z-index: 3; pointer-events: none; transition: opacity 0.5s;
-        }
-
-        /* 에러를 화면에 표시하는 헬퍼 함수 스타일 */
-        #error-log { position: fixed; top: 0; left: 0; background: rgba(255,0,0,0.8); color: #fff; z-index: 9999; font-family: monospace; padding: 10px; display: none; pointer-events: none; }
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Helvetica Neue', Arial, sans-serif; touch-action: none; }
+        canvas { display: block; }
+        /* 에러 로그 */
+        #error-log { position: fixed; top: 0; left: 0; background: rgba(255,0,0,0.8); color: #fff; z-index: 9999; font-family: monospace; padding: 10px; display: none; }
+        /* 안내 문구 */
+        #hint { position: fixed; bottom: 40px; width: 100%; text-align: center; color: #fff; font-size: 11px; letter-spacing: 5px; font-weight: 300; z-index: 10; pointer-events: none; opacity: 0.5; mix-blend-mode: difference; }
     </style>
 </head>
 <body>
     <div id="error-log"></div>
-    <div id="webgl-container"></div>
-    <canvas id="overlay-canvas"></canvas>
-    <div id="hint">CLICK TO SPREAD THE INK OF REALITY</div>
+    <div id="hint">CLICK AND DRAG TO SPREAD THE INK</div>
+
+    <canvas id="mask-canvas" style="display:none;"></canvas>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
+    <script id="blackHoleShader" type="x-shader/x-fragment">
+        uniform float uTime;
+        uniform vec2 uResolution;
+        varying vec2 vUv;
+
+        // 고급 프랙탈 노이즈 (fBM)
+        mat2 m = mat2( 0.80,  0.60, -0.60,  0.80 );
+        float hash( float n ) { return fract(sin(n)*43758.5453); }
+        float noise( in vec2 x ) {
+            vec2 p = floor(x); vec2 f = fract(x);
+            f = f*f*(3.0-2.0*f); float n = p.x + p.y*57.0;
+            return mix(mix( hash(n+  0.0), hash(n+  1.0),f.x), mix( hash(n+ 57.0), hash(n+ 58.0),f.x),f.y);
+        }
+        float fbm( vec2 p ) {
+            float f = 0.0;
+            f += 0.50000*noise( p ); p = m*p*2.02;
+            f += 0.25000*noise( p ); p = m*p*2.03;
+            f += 0.12500*noise( p ); p = m*p*2.01;
+            f += 0.06250*noise( p ); p = m*p*2.04;
+            f += 0.03125*noise( p );
+            return f/0.96875;
+        }
+
+        void main() {
+            vec2 uv = (gl_FragCoord.xy - 0.5 * uResolution.xy) / min(uResolution.y, uResolution.x);
+            float t = uTime * 0.5;
+
+            // 1. 중력 렌즈 효과 (Gravitational Lensing)
+            float dist = length(uv);
+            float mass = 0.04; // 블랙홀 질량
+            vec2 warpedUv = uv;
+            if(dist > 0.0) {
+                float warp = mass / (dist * dist + 0.01);
+                warpedUv = uv + normalize(uv) * warp;
+            }
+
+            vec3 col = vec3(0.0);
+
+            // 2. 심연의 배경 네뷸라 (퍼플 & 블루)
+            float nebNoise = fbm(warpedUv * 3.0 + vec2(t*0.1, t*0.05));
+            float nebNoise2 = fbm(warpedUv * 5.0 - vec2(t*0.08, t*0.04));
+            vec3 nebColor = mix(vec3(0.05, 0.1, 0.3), vec3(0.4, 0.05, 0.3), nebNoise);
+            col += nebColor * nebNoise2 * 1.5;
+
+            // 3. 은하수 별빛 (가스에 가려진 별)
+            float starNoise = hash(floor(warpedUv.x * 500.0) + floor(warpedUv.y * 500.0) * 113.0);
+            if(starNoise > 0.99) col += vec3(1.0) * (starNoise - 0.99) * 100.0 * (0.5 + 0.5*sin(uTime*5.0 + starNoise*100.0));
+
+            // 4. 가스 원반 (Accretion Disk) - 옥테인 랜더 스타일의 주황/황금빛 가스
+            // 기울어진 원반을 위한 타원형 거리 계산
+            vec2 diskUv = warpedUv;
+            diskUv.y *= 3.5; // 기울기 부여
+            float diskDist = length(diskUv);
+            
+            // 안쪽과 바깥쪽 경계 설정
+            float diskAlpha = smoothstep(0.8, 0.3, diskDist) * smoothstep(0.2, 0.25, diskDist);
+            
+            // 가스의 흐름 노이즈
+            float angle = atan(diskUv.y, diskUv.x);
+            vec2 polarUv = vec2(angle * 2.0 - t * 3.0, diskDist * 5.0 - t);
+            float gasNoise = fbm(polarUv * 3.0);
+            float gasNoise2 = fbm(polarUv * 8.0 + vec2(t));
+            
+            float diskDensity = diskAlpha * gasNoise * (0.5 + 0.5 * gasNoise2);
+            
+            // 섭씨 1만도 이상의 발광 컬러 매핑
+            vec3 coreColor = vec3(1.0, 1.0, 0.9);
+            vec3 midColor = vec3(1.0, 0.5, 0.1);
+            vec3 edgeColor = vec3(0.6, 0.1, 0.0);
+            
+            vec3 diskColor = mix(edgeColor, midColor, smoothstep(0.0, 0.5, diskDensity));
+            diskColor = mix(diskColor, coreColor, smoothstep(0.5, 1.0, diskDensity));
+            
+            // 발광 증폭 (Bloom 전단계)
+            col += diskColor * diskDensity * 8.0;
+
+            // 5. 사건의 지평선 (Event Horizon - 완벽한 어둠)
+            float eventHorizon = smoothstep(0.18, 0.17, dist);
+            col = mix(col, vec3(0.0), eventHorizon);
+
+            // 주변부 글로우 (Photon Ring)
+            float photonRing = smoothstep(0.22, 0.17, dist) * smoothstep(0.14, 0.17, dist);
+            col += vec3(1.0, 0.8, 0.5) * photonRing * 3.0;
+
+            // 비네팅 (가장자리 어둡게)
+            col *= 1.0 - length(uv) * 0.5;
+
+            gl_FragColor = vec4(pow(col, vec3(1.0/2.2)), 1.0); // 감마 콜렉션
+        }
+    </script>
+
+    <script id="inkMaskShader" type="x-shader/x-fragment">
+        uniform sampler2D tBackground; // 렌더링된 3D 우주
+        uniform sampler2D tMask;       // 마우스로 그린 캔버스
+        uniform float uTime;
+        varying vec2 vUv;
+
+        // 잉크 가장자리용 하이프리퀀시 노이즈
+        float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+        float noise(vec2 p) {
+            vec2 i = floor(p); vec2 f = fract(p);
+            vec2 u = f * f * (3.0 - 2.0 * f);
+            return mix(mix(hash(i + vec2(0.0,0.0)), hash(i + vec2(1.0,0.0)), u.x),
+                       mix(hash(i + vec2(0.0,1.0)), hash(i + vec2(1.0,1.0)), u.x), u.y);
+        }
+        float fbm(vec2 p) {
+            float f = 0.0;
+            f += 0.5000 * noise(p); p *= 2.02;
+            f += 0.2500 * noise(p); p *= 2.03;
+            f += 0.1250 * noise(p); p *= 2.01;
+            f += 0.0625 * noise(p);
+            return f;
+        }
+
+        void main() {
+            vec4 bgCol = texture2D(tBackground, vUv);
+            float maskVal = texture2D(tMask, vUv).r; // 캔버스의 밝기값
+            
+            // 전경: 하얀색 종이 질감 살짝
+            float paperNoise = noise(vUv * 500.0) * 0.05;
+            vec3 fgCol = vec3(0.95 + paperNoise); 
+
+            // 잉크가 스며드는 경계면 생성 로직
+            // 캔버스에서 그린 둥근 브러시에 fBM 노이즈를 더해 거칠고 유기적인 먹물 테두리를 만듦
+            float edgeNoise = fbm(vUv * 15.0 - vec2(uTime * 0.2));
+            float edgeNoise2 = fbm(vUv * 40.0 + vec2(uTime * 0.1));
+            
+            // maskVal이 0보다 크면 번짐 시작
+            float threshold = maskVal + (edgeNoise * 0.4 + edgeNoise2 * 0.2) * maskVal;
+            
+            // 잉크 번짐의 알파(투명도) 결정
+            float alpha = smoothstep(0.2, 0.5, threshold);
+            
+            // 경계선(먹물이 타들어가는 엣지)에 타는 듯한 짙은 잉크색 추가
+            float burnEdge = smoothstep(0.2, 0.4, threshold) - smoothstep(0.4, 0.5, threshold);
+            vec3 inkBurnColor = vec3(0.05, 0.0, 0.1); // 진한 먹색/보라색
+            
+            vec3 finalColor = mix(fgCol, inkBurnColor, burnEdge * 1.5);
+            finalColor = mix(finalColor, bgCol.rgb, alpha);
+
+            gl_FragColor = vec4(finalColor, 1.0);
+        }
+    </script>
+
     <script>
-        // 에러를 화면에 표시하는 헬퍼 함수
         window.onerror = function(msg, url, line) {
-            var errDiv = document.getElementById('error-log');
-            errDiv.style.display = 'block';
-            errDiv.innerHTML += msg + ' (Line: ' + line + ')<br>';
+            let err = document.getElementById('error-log');
+            err.style.display = 'block';
+            err.innerHTML += msg + ' (Line: ' + line + ')<br>';
             return false;
         };
 
-        // 오디오 에러(404)를 무시하는 안전한 실행 함수
-        function safeAudioPlay(audio, volume) {
-            if (audio) {
-                audio.volume = volume || 1.0;
-                audio.currentTime = 0;
-                var promise = audio.play();
-                if (promise !== undefined) { promise.catch(function(e) {}); }
-            }
-        }
-        function safeAudioPause(audio) {
-            if (audio) { audio.pause(); audio.currentTime = 0; }
-        }
-
-        let chargeAudio = new Audio('charge.mp3'); chargeAudio.loop = true;
-        let glitchAudio = new Audio('glitch.mp3'); glitchAudio.loop = true;
-
-        // ========================================================
-        // 1. WebGL 3D 우주 배경 (심연) 셋업
-        // ========================================================
-        const container = document.getElementById('webgl-container');
-        const scene = new THREE.Scene();
+        let scene, camera, renderer;
+        let bgRenderTarget;
+        let blackHoleMaterial;
+        let finalMaterial, finalScene, finalCamera;
         
-        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 15000);
-        camera.position.z = 2500; // 카메라를 좀 더 뒤로 빼서 광활한 우주를 조망
-
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // 모바일 발열 방지
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        container.appendChild(renderer.domElement);
-
-        // 전체 은하 그룹
-        const galaxyGroup = new THREE.Group();
-        scene.add(galaxyGroup);
-
-        // ========================================================
-        // UPGRADE: 15만 개의 SDF 하이퀄리티 별 시스템
-        // ========================================================
-        const particleCount = 150000;
-        const starGeom = new THREE.BufferGeometry();
-        const starPos = new Float32Array(particleCount * 3);
-        const starColors = new Float32Array(particleCount * 3);
-        const starSizes = new Float32Array(particleCount);
-
-        const starColorPalette = [
-            new THREE.Color(0xaabbff), // 푸른 별
-            new THREE.Color(0xffffee), // 흰색 별
-            new THREE.Color(0xffddaa)  // 노란 별
-        ];
-
-        for (let i = 0; i < particleCount; i++) {
-            // 거대한 나선 은하 형태 배치
-            const radius = 300 + Math.random() * 8000;
-            const theta = Math.random() * Math.PI * 2 + (radius * 0.0005); // 나선형 회전
-            const yOffset = (Math.random() - 0.5) * 800 * (1.0 - radius/8000); // 중앙으로 갈수록 두꺼움
-            
-            starPos[i * 3] = Math.cos(theta) * radius;
-            starPos[i * 3 + 1] = yOffset;
-            starPos[i * 3 + 2] = Math.sin(theta) * radius;
-
-            const color = starColorPalette[Math.floor(Math.random() * starColorPalette.length)];
-            starColors[i * 3] = color.r;
-            starColors[i * 3 + 1] = color.g;
-            starColors[i * 3 + 2] = color.b;
-
-            starSizes[i] = 1.0 + Math.random() * 4.0;
-        }
-
-        starGeom.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
-        starGeom.setAttribute('color', new THREE.BufferAttribute(starColors, 3));
-        starGeom.setAttribute('size', new THREE.BufferAttribute(starSizes, 1));
-
-        // 고퀄리티 SDF 별 쉐이더 매테리얼
-        const starMaterial = new THREE.ShaderMaterial({
-            uniforms: { uTime: { value: 0.0 } },
-            vertexShader: `
-                attribute float size;
-                varying vec3 vColor;
-                void main() {
-                    vColor = color;
-                    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-                    gl_Position = projectionMatrix * mvPosition;
-                    // 외곽으로 갈수록 작아지게
-                    float depthDist = length(mvPosition.xyz);
-                    gl_PointSize = size * (2000.0 / depthDist) * (1.0 + sin(position.x + uTime * 2.0) * 0.1); 
-                }
-            `,
-            fragmentShader: `
-                varying vec3 vColor;
-                void main() {
-                    // SDF 기반의 완벽한 원형 & 글로우 효과
-                    float dist = length(gl_PointCoord - vec2(0.5));
-                    if (dist > 0.5) discard;
-                    // 중앙은 밝고 외곽은 부드럽게 퍼짐
-                    float alpha = pow(1.0 - (dist * 2.0), 2.0);
-                    gl_FragColor = vec4(vColor, alpha * 0.9);
-                }
-            `,
-            transparent: true,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-            vertexColors: true
-        });
-
-        const starSystem = new THREE.Points(starGeom, starMaterial);
-        galaxyGroup.add(starSystem);
-
-        // ========================================================
-        // UPGRADE: 절차적 노이즈 네뷸라 (성운) 시스템
-        // ========================================================
-        const nebulaCount = 6;
-        const nebulaColors = [
-            [0.2, 0.0, 0.5], // 퍼플 심연
-            [0.0, 0.3, 0.6], // 블루 심연
-            [0.4, 0.1, 0.6]  // 마젠타 심연
-        ];
-
-        for (let i = 0; i < nebulaCount; i++) {
-            const geom = new THREE.SphereGeometry(2000 + i * 500, 64, 64);
-            const color = nebulaColors[i % nebulaColors.length];
-            const mat = new THREE.ShaderMaterial({
-                uniforms: {
-                    uTime: { value: 0.0 },
-                    uColor: { value: new THREE.Vector3(color[0], color[1], color[2]) }
-                },
-                vertexShader: `
-                    varying vec3 vNormal;
-                    varying vec3 vPosition;
-                    void main() {
-                        vNormal = normalize(normalMatrix * normal);
-                        vPosition = position;
-                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-                    }
-                `,
-                fragmentShader: `
-                    uniform float uTime;
-                    uniform vec3 uColor;
-                    varying vec3 vNormal;
-                    varying vec3 vPosition;
-
-                    // GPU 전용 노이즈 함수 (fBM)
-                    float hash(float n) { return fract(sin(n) * 753.5453123); }
-                    float noise(in vec3 x) {
-                        vec3 p = floor(x);
-                        vec3 f = fract(x);
-                        f = f*f*(3.0-2.0*f);
-                        float n = p.x + p.y*157.0 + 113.0*p.z;
-                        return mix(mix(mix(hash(n+0.0), hash(n+1.0),f.x),
-                                       mix(hash(n+157.0), hash(n+158.0),f.x),f.y),
-                                   mix(mix(hash(n+113.0), hash(n+114.0),f.x),
-                                       mix(hash(n+270.0), hash(n+271.0),f.x),f.y),f.z);
-                    }
-                    float fbm(vec3 p) {
-                        float f = 0.0;
-                        f += 0.5000*noise(p); p = p*2.02;
-                        f += 0.2500*noise(p); p = p*2.03;
-                        f += 0.1250*noise(p); p = p*2.01;
-                        f += 0.0625*noise(p);
-                        return f / 0.9375;
-                    }
-
-                    void main() {
-                        // 성운의 흐름
-                        vec3 p = vPosition * 0.001 + vec3(uTime * 0.05, 0.0, uTime * 0.03);
-                        float nebulaIntensity = fbm(p);
-                        
-                        // 가장자리로 갈수록 투명하게 (프레넬)
-                        float dotProduct = dot(vNormal, vec3(0.0, 0.0, 1.0));
-                        float fresnel = pow(1.0 - max(0.0, dotProduct), 3.0);
-                        
-                        // 성운 색상 조합
-                        vec3 col = uColor * nebulaIntensity * 1.5;
-                        float alpha = (nebulaIntensity - 0.2) * 1.2; // 노이즈 컷오프
-                        
-                        // 몽환적인 글로우
-                        col += vec3(1.0, 0.8, 1.0) * fresnel * nebulaIntensity * 0.5;
-                        alpha *= (1.0 - fresnel * 0.8);
-
-                        if(alpha < 0.0) discard;
-                        gl_FragColor = vec4(pow(col, vec3(1.0/2.2)), alpha);
-                    }
-                `,
-                transparent: true,
-                blending: THREE.AdditiveBlending,
-                depthWrite: false,
-                side: THREE.BackSide // 안쪽에서 성운을 바라보게
-            });
-            const nebulaSphere = new THREE.Mesh(geom, mat);
-            // 각 성운 층마다 미세하게 다른 회전축 세팅
-            nebulaSphere.rotation.x = Math.random() * Math.PI;
-            nebulaSphere.rotation.y = Math.random() * Math.PI;
-            galaxyGroup.add(nebulaSphere);
-        }
-
-        // ========================================================
-        // UPGRADE: 블랙홀 & 가스 원반 (Accretion Disk) 시스템
-        // ========================================================
-        const blackHoleGroup = new THREE.Group();
-        blackHoleGroup.position.set(0, 0, -200); // 찢어진 틈새 바로 뒤에 배치
-        galaxyGroup.add(blackHoleGroup);
-
-        // 1. 사건의 지평선 (완전한 블랙 구체)
-        const singularityGeom = new THREE.SphereGeometry(150, 64, 64);
-        const singularityMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
-        const singularity = new THREE.Mesh(singularityGeom, singularityMat);
-        blackHoleGroup.add(singularity);
-
-        // 2. 가스 원반 (Accretion Disk) - 쉐이더 기반
-        const diskGeom = new THREE.RingGeometry(180, 800, 128);
-        diskGeom.rotateX(-Math.PI * 0.45); // 살짝 눞힘
-        const diskMat = new THREE.ShaderMaterial({
-            uniforms: { uTime: { value: 0.0 } },
-            vertexShader: `
-                varying vec2 vUv;
-                varying vec3 vPosition;
-                void main() {
-                    vUv = uv;
-                    vPosition = position;
-                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-                }
-            `,
-            fragmentShader: `
-                uniform float uTime;
-                varying vec2 vUv;
-                varying vec3 vPosition;
-
-                void main() {
-                    // SDF 기반 원반 질감
-                    float dist = length(vPosition.xz);
-                    float disk_width = 800.0;
-                    float inner_rad = 180.0;
-                    
-                    // 나선형 소용돌이 질감
-                    float angle = atan(vPosition.z, vPosition.x);
-                    float swirl = sin(angle * 4.0 - uTime * 8.0 + dist * 0.02) * 0.5 + 0.5;
-                    
-                    // 색상 스펙트럼 (블랙홀 가장자리는 하얗게, 외곽은 주황빛)
-                    float intensity = pow(1.0 - (dist - inner_rad) / (disk_width - inner_rad), 2.0);
-                    vec3 col = mix(vec3(1.0, 0.6, 0.2), vec3(1.0, 0.9, 0.8), intensity * 0.8);
-                    
-                    // 질감 조합
-                    col *= (0.7 + swirl * 0.3);
-                    
-                    // 안쪽과 외곽의 부드러운 빛바램
-                    float alpha = mix(0.0, 1.0, smoothstep(inner_rad, inner_rad+50.0, dist));
-                    alpha *= mix(1.0, 0.0, smoothstep(disk_width-200.0, disk_width, dist));
-
-                    gl_FragColor = vec4(pow(col, vec3(1.0/2.2)), alpha * intensity * 0.9);
-                }
-            `,
-            transparent: true,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-            side: THREE.DoubleSide
-        });
-        const accretionDisk = new THREE.Mesh(diskGeom, diskMat);
-        blackHoleGroup.add(accretionDisk);
-
-        // ========================================================
-        // 2. HTML5 Canvas 2D 오버레이 (번지는 평면) 셋업
-        // ========================================================
-        const canvas = document.getElementById('overlay-canvas');
-        const ctx = canvas.getContext('2d');
-        const hint = document.getElementById('hint');
-        
+        let maskCanvas, maskCtx, maskTexture;
         let isDrawing = false;
         let lastX = 0, lastY = 0;
-        let targetMouseX = 0, targetMouseY = 0;
-        let cameraX = 0, cameraY = 0;
 
-        // 잉크 번짐 객체 배열
-        const inkSpreads = [];
-        class InkSpread {
-            constructor(x, y) {
-                this.x = x;
-                this.y = y;
-                this.radius = 1;
-                this.growthRate = 15; // 번지는 속도
-                this.opacity = 1.0; // 투명도
-            }
-            update() {
-                this.radius += this.growthRate;
-                this.opacity -= 0.01; // 점점 투명해짐
-            }
+        // 잉크 번짐 파티클 관리 배열
+        const inkDrops = [];
+
+        init();
+        animate();
+
+        function init() {
+            // ----------------------------------------------------
+            // 1. 마스크 캔버스 셋업 (잉크 데이터용)
+            // ----------------------------------------------------
+            maskCanvas = document.getElementById('mask-canvas');
+            maskCanvas.width = window.innerWidth;
+            maskCanvas.height = window.innerHeight;
+            maskCtx = maskCanvas.getContext('2d');
+            
+            // 검은색 바탕(안보임)에 하얀색(보임)으로 마스킹
+            maskCtx.fillStyle = '#000000';
+            maskCtx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
+            
+            // 타이포그래피 (검은색 바디에서 하얀색 글씨로 구멍을 냄)
+            maskCtx.fillStyle = 'rgba(255, 255, 255, 0.05)'; // 글씨에서 은은하게 우주가 비치게
+            maskCtx.textAlign = 'center'; maskCtx.textBaseline = 'middle';
+            maskCtx.font = '900 min(8vw, 120px) "Helvetica Neue", Arial, sans-serif';
+            maskCtx.fillText('PANDA UNIVERSE', maskCanvas.width/2, maskCanvas.height/2 - 20);
+            maskCtx.font = 'bold min(2vw, 24px) "Helvetica Neue", Arial, sans-serif';
+            maskCtx.fillText('3D MOTION GRAPHICS & MEDIA ART', maskCanvas.width/2, maskCanvas.height/2 + 60);
+
+            maskTexture = new THREE.CanvasTexture(maskCanvas);
+            maskTexture.minFilter = THREE.LinearFilter;
+
+            // ----------------------------------------------------
+            // 2. WebGL 기본 셋업
+            // ----------------------------------------------------
+            renderer = new THREE.WebGLRenderer({ antialias: false });
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // 배경(우주)을 오프스크린 렌더링하기 위한 타겟 생성
+            bgRenderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight);
+
+            // ----------------------------------------------------
+            // 3. 우주 씬 (Background Scene) 셋업
+            // ----------------------------------------------------
+            scene = new THREE.Scene();
+            camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1); // 2D 평면 카메라
+
+            // 화면을 가득 채우는 블랙홀 커스텀 쉐이더 매테리얼
+            blackHoleMaterial = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0.0 },
+                    uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) }
+                },
+                vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position, 1.0); }`,
+                fragmentShader: document.getElementById('blackHoleShader').textContent
+            });
+            const bgPlane = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), blackHoleMaterial);
+            scene.add(bgPlane);
+
+            // ----------------------------------------------------
+            // 4. 최종 렌더링 씬 (Foreground Masking Scene)
+            // ----------------------------------------------------
+            finalScene = new THREE.Scene();
+            finalCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+            finalMaterial = new THREE.ShaderMaterial({
+                uniforms: {
+                    tBackground: { value: bgRenderTarget.texture },
+                    tMask: { value: maskTexture },
+                    uTime: { value: 0.0 }
+                },
+                vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position, 1.0); }`,
+                fragmentShader: document.getElementById('inkMaskShader').textContent
+            });
+            const finalPlane = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), finalMaterial);
+            finalScene.add(finalPlane);
+
+            // ----------------------------------------------------
+            // 5. 인터랙션 이벤트
+            // ----------------------------------------------------
+            window.addEventListener('resize', onWindowResize);
+            document.addEventListener('mousedown', onPointerDown);
+            document.addEventListener('mousemove', onPointerMove);
+            document.addEventListener('mouseup', onPointerUp);
+            document.addEventListener('touchstart', (e)=>{ onPointerDown(e.touches[0]); }, {passive:false});
+            document.addEventListener('touchmove', (e)=>{ e.preventDefault(); onPointerMove(e.touches[0]); }, {passive:false});
+            document.addEventListener('touchend', onPointerUp);
         }
 
-        function initCanvas() {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-            
-            ctx.globalCompositeOperation = 'source-over';
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-            ctx.fillStyle = '#000000';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            const centerX = canvas.width / 2, centerY = canvas.height / 2;
-
-            // 메인 타이틀
-            ctx.font = '900 min(8vw, 120px) "Helvetica Neue", Arial, sans-serif';
-            ctx.fillText('PANDA UNIVERSE', centerX, centerY - 20);
-            
-            // 서브 타이틀
-            ctx.font = 'bold min(2vw, 24px) "Helvetica Neue", Arial, sans-serif';
-            ctx.fillStyle = '#555555';
-            ctx.fillText('3D MOTION GRAPHICS & MEDIA ART', centerX, centerY + 60);
-            
-            // destinations-out 모드를클릭 후 번짐 효과 그리기 전용으로 사용
-            ctx.globalCompositeOperation = 'destination-out';
+        // --- 잉크 번짐 시스템 ---
+        function addInkDrop(x, y, force = 1.0) {
+            document.getElementById('hint').style.opacity = 0;
+            // 랜덤 사이즈와 확장 속도를 가진 잉크 방울 생성
+            inkDrops.push({
+                x: x, y: y,
+                radius: 5 * force,
+                maxRadius: (80 + Math.random() * 100) * force,
+                life: 1.0
+            });
         }
-        initCanvas();
 
-        // 잉크 번짐 효과 그리기 로직
-        function handleInkSpreads() {
-            if (inkSpreads.length > 0) {
-                for (let i = inkSpreads.length - 1; i >= 0; i--) {
-                    let is = inkSpreads[i];
-                    is.update();
+        function updateInkCanvas() {
+            let needsUpdate = false;
+            for (let i = inkDrops.length - 1; i >= 0; i--) {
+                let drop = inkDrops[i];
+                
+                // 그라데이션 브러시 생성 (가운데는 진하고 외곽은 부드럽게)
+                let grad = maskCtx.createRadialGradient(drop.x, drop.y, 0, drop.x, drop.y, drop.radius);
+                grad.addColorStop(0, `rgba(255, 255, 255, ${drop.life})`);
+                grad.addColorStop(0.5, `rgba(255, 255, 255, ${drop.life * 0.5})`);
+                grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                
+                maskCtx.beginPath();
+                maskCtx.fillStyle = grad;
+                maskCtx.arc(drop.x, drop.y, drop.radius, 0, Math.PI * 2);
+                maskCtx.fill();
 
-                    ctx.beginPath();
-                    // SDF 기반의 완벽한 원형 그라데이션
-                    let gradient = ctx.createRadialGradient(is.x, is.y, 0, is.x, is.y, is.radius);
-                    gradient.addColorStop(0, `rgba(255, 255, 255, ${is.opacity})`);
-                    gradient.addColorStop(0.5, `rgba(255, 255, 255, ${is.opacity * 0.8})`);
-                    gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
-                    ctx.fillStyle = gradient;
-                    ctx.arc(is.x, is.y, is.radius, 0, Math.PI * 2);
-                    ctx.fill();
+                // 속성 업데이트 (퍼지면서 희미해짐)
+                drop.radius += (drop.maxRadius - drop.radius) * 0.1; 
+                drop.life -= 0.015;
 
-                    // 투명도가 0이 되면 배열에서 제거
-                    if (is.opacity <= 0) {
-                        inkSpreads.splice(i, 1);
-                    }
-                }
+                if (drop.life <= 0) inkDrops.splice(i, 1);
+                needsUpdate = true;
+            }
+            if(needsUpdate) maskTexture.needsUpdate = true; // 중요: GPU로 텍스처 다시 넘김
+        }
+
+        function onPointerDown(e) {
+            isDrawing = true;
+            lastX = e.clientX; lastY = e.clientY;
+            addInkDrop(lastX, lastY, 2.0); // 클릭 시 강한 번짐
+        }
+        function onPointerMove(e) {
+            if (!isDrawing) return;
+            const dist = Math.hypot(e.clientX - lastX, e.clientY - lastY);
+            if (dist > 10) { // 너무 촘촘하게 찍히는 것 방지
+                addInkDrop(e.clientX, e.clientY, 0.8 + Math.random()*0.5);
+                lastX = e.clientX; lastY = e.clientY;
             }
         }
+        function onPointerUp() { isDrawing = false; }
 
-        // 거친 종이가 찢어지는 듯한 브러시 로직 (클릭 시 잉크 번짐 효과 추가)
-        function drawTear(x, y) {
-            hint.style.opacity = '0'; // 힌트 숨기기
+        function onWindowResize() {
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            bgRenderTarget.setSize(window.innerWidth, window.innerHeight);
+            blackHoleMaterial.uniforms.uResolution.value.set(window.innerWidth, window.innerHeight);
             
-            // 잉크 번짐 객체 추가
-            inkSpreads.push(new InkSpread(x, y));
-
-            ctx.beginPath();
-            ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-            ctx.lineWidth = 100 + Math.random() * 60; // 두께 무작위로 하여 거칠게
-            ctx.moveTo(lastX, lastY); ctx.lineTo(x, y); ctx.stroke();
-
-            // 찢어진 단면 노이즈 브러시
-            for (let i = 0; i < 15; i++) {
-                const offsetX = (Math.random() - 0.5) * 180, offsetY = (Math.random() - 0.5) * 180;
-                const radius = Math.random() * 20 + 5;
-                ctx.beginPath(); ctx.arc(x + offsetX, y + offsetY, radius, 0, Math.PI * 2); ctx.fill();
-            }
-            lastX = x; lastY = y;
+            // 캔버스 리사이즈 및 타이포그래피 복구 로직 (생략: 기존 그림 유지 위해 리사이즈 비율만 조정)
+            let tempCanvas = document.createElement('canvas');
+            tempCanvas.width = maskCanvas.width; tempCanvas.height = maskCanvas.height;
+            tempCanvas.getContext('2d').drawImage(maskCanvas, 0, 0);
+            
+            maskCanvas.width = window.innerWidth; maskCanvas.height = window.innerHeight;
+            maskCtx.fillStyle = '#000000'; maskCtx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
+            maskCtx.drawImage(tempCanvas, 0, 0, maskCanvas.width, maskCanvas.height);
+            maskTexture.needsUpdate = true;
         }
 
-        // ========================================================
-        // 3. 이벤트 리스너 (마우스 & 터치 동기화)
-        // ========================================================
-        function handleStart(x, y) { isDrawing = true; lastX = x; lastY = y; updateParallaxTarget(x, y); drawTear(x, y); }
-        function handleMove(x, y) { updateParallaxTarget(x, y); if (isDrawing) { drawTear(x, y); } }
-        function handleEnd() { isDrawing = false; }
-        function updateParallaxTarget(x, y) { targetMouseX = (x - window.innerWidth / 2) * 0.002; targetMouseY = (y - window.innerHeight / 2) * 0.002; }
-
-        canvas.addEventListener('mousedown', (e) => handleStart(e.clientX, e.clientY));
-        canvas.addEventListener('mousemove', (e) => handleMove(e.clientX, e.clientY));
-        window.addEventListener('mouseup', handleEnd);
-        canvas.addEventListener('touchstart', (e) => { e.preventDefault(); handleStart(e.touches[0].clientX, e.touches[0].clientY); }, { passive: false });
-        canvas.addEventListener('touchmove', (e) => { e.preventDefault(); handleMove(e.touches[0].clientX, e.touches[0].clientY); }, { passive: false });
-        window.addEventListener('touchend', handleEnd);
-
-        window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); initCanvas(); hint.style.opacity = '1'; });
-
-        // ========================================================
-        // 4. 애니메이션 루프 (우주 자전 & 패럴랙스)
-        // ========================================================
         const clock = new THREE.Clock();
 
         function animate() {
             requestAnimationFrame(animate);
-            const delta = clock.getDelta();
             const elapsedTime = clock.getElapsedTime();
 
-            // 1. Uniforms 업데이트 (애니메이션 구동)
-            starMaterial.uniforms.uTime.value = elapsedTime;
-            diskMat.uniforms.uTime.value = elapsedTime;
-            // 각 네뷸라 층마다 쉐이더 시간 전달
-            galaxyGroup.children.forEach(child => {
-                if (child.material && child.material.uniforms && child.material.uniforms.uTime) {
-                    child.material.uniforms.uTime.value = elapsedTime;
-                }
-            });
+            // 1. 유니폼 타임 업데이트
+            blackHoleMaterial.uniforms.uTime.value = elapsedTime;
+            finalMaterial.uniforms.uTime.value = elapsedTime;
 
-            // 2. 우주 자전 (매우 천천히)
-            galaxyGroup.rotation.y = elapsedTime * 0.03;
-            // 블랙홀 원반 자전 (더 빠르게)
-            accretionDisk.rotation.z = -elapsedTime * 0.5;
+            // 2. 캔버스 잉크 번짐 로직 업데이트
+            updateInkCanvas();
 
-            // 3. 캔버스 잉크 번짐 효과 갱신
-            handleInkSpreads();
-
-            // 4. 3D 패럴랙스(시차) 로직 (깊이감 극대화)
-            cameraX += (targetMouseX * 1200 - cameraX) * 0.05; // 움직임 폭을 넓힘
-            cameraY += (-targetMouseY * 1200 - cameraY) * 0.05;
-            
-            camera.position.x = cameraX;
-            camera.position.y = cameraY;
-            camera.lookAt(0, 0, -200); // 블랙홀을 바라봄
-
+            // 3. 렌더 파이프라인
+            // Step A: 3D 우주(블랙홀)를 보이지 않는 텍스처(bgRenderTarget)에 렌더링
+            renderer.setRenderTarget(bgRenderTarget);
             renderer.render(scene, camera);
+
+            // Step B: 화면에 전경 마스킹 쉐이더 렌더링 (우주 텍스처 + 캔버스 잉크 데이터 조합)
+            renderer.setRenderTarget(null);
+            renderer.render(finalScene, finalCamera);
         }
-        animate();
     </script>
 </body>
 </html>
