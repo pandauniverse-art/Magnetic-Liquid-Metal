@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>High-End Interactive Waterfall of Light</title>
+    <title>High-End Interactive Waterfall of Light (Organic Wave & 30k Particles)</title>
     <style>
         body { margin: 0; padding: 0; overflow: hidden; background-color: #000000; touch-action: none; }
         canvas { display: block; width: 100vw; height: 100vh; }
@@ -23,7 +23,8 @@
         // --------------------------------------------------------
         // 1. 초기 설정
         // --------------------------------------------------------
-        const PARTICLE_COUNT = 100000; // 기존 50만 개의 20% 수준으로 조정
+        // 사용자 요청: 현재(10만 개) 기준에서 30%로 감축 -> 30,000개
+        const PARTICLE_COUNT = 30000; 
         const WATERFALL_WIDTH = 50;
         const WATERFALL_HEIGHT = 70;
         const WATERFALL_DEPTH = 20;
@@ -53,7 +54,7 @@
         document.body.appendChild(renderer.domElement);
 
         // --------------------------------------------------------
-        // 3. 메가 쉐이더
+        // 3. 메가 쉐이더 (유기적인 웨이브 추가)
         // --------------------------------------------------------
         const vertexShader = `
             uniform float uTime;
@@ -67,7 +68,7 @@
             varying vec3 vColor;
             varying float vAlpha;
 
-            // Simplex Noise
+            // Simplex Noise (fBM용)
             vec4 permute(vec4 x){return mod(((x*34.0)+1.0)*x, 289.0);}
             vec4 taylorInvSqrt(vec4 r){return 1.79284291400159 - 0.85373472095314 * r;}
             float snoise(vec3 v){ 
@@ -128,12 +129,25 @@
             }
 
             void main() {
+                // 낙하 계산 (기본 속도의 30%)
                 float fallSpeed = 0.03;
                 float life = fract(aPhase - uTime * fallSpeed);
                 vec3 pos = aOffset;
                 pos.y = ${WATERFALL_HEIGHT.toFixed(1)} / 2.0 - life * ${WATERFALL_HEIGHT.toFixed(1)};
 
-                // 덩어리감 (Clumping)
+                // *** 사용자 요청: 유기적인 웨이브 추가 ***
+                // 일직선이 아니라 굽이치듯 흐르는 거대한 Sway 연산
+                float swayFrequency = 0.04; // 물결이 생기는 주기 (세로 방향)
+                float swaySpeed = 0.6;     // 물결이 움직이는 속도 (시간 방향)
+                float swayMagnitude = 4.0; // 물결이 휘어지는 크기
+
+                // 시간과 Y축 좌표를 기준으로 천천히 움직이는 Sway 계산
+                float swayX = sin(pos.y * swayFrequency + uTime * swaySpeed) * swayMagnitude;
+                
+                // Sway를 기본 좌표에 적용
+                pos.x += swayX;
+
+                // --- Maintain Clumping/Flow --- (기존의 미세 노이즈 유지)
                 float clumpingNoise = fbm(vec3(pos.x * 0.05, pos.y * 0.02, uTime * 0.05));
                 float noiseClump = smoothstep(0.0, 0.4, abs(clumpingNoise));
                 pos.x += noiseClump * sign(clumpingNoise) * 2.0;
@@ -159,9 +173,9 @@
                     }
                 }
 
-                // 빛의 실선 형태
+                // 빛의 실선 형태 (개수가 줄었으므로 두께를 미세하게 증가)
                 vec3 scaledPosition = position;
-                scaledPosition.x *= 0.06; // 실선 두께
+                scaledPosition.x *= 0.08; // 실선 두께 (0.06 -> 0.08로 증가)
                 scaledPosition.y *= aScale * 6.0; // 실선 길이
                 vec3 finalPos = pos + scaledPosition;
 
