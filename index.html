@@ -3,20 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Waterfall of Light - Interactive Media Art</title>
+    <title>High-End Interactive Waterfall of Light - teamLab Style</title>
     <style>
-        body {
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            background-color: #000000; /* 완전한 칠흑 */
-            touch-action: none; /* 모바일 브라우저 스크롤 방지 */
-        }
-        canvas {
-            display: block;
-            width: 100vw;
-            height: 100vh;
-        }
+        body { margin: 0; padding: 0; overflow: hidden; background-color: #000000; touch-action: none; }
+        canvas { display: block; width: 100vw; height: 100vh; }
     </style>
     <script type="importmap">
         {
@@ -31,9 +21,9 @@
         import * as THREE from 'three';
 
         // --------------------------------------------------------
-        // 1. 초기 설정 및 변수 선언 (Hoisting 방지를 위한 엄격한 순서)
+        // 1. 초기 설정 및 변수 선언 (Hoisting 방지)
         // --------------------------------------------------------
-        const PARTICLE_COUNT = 1200000; // 120만 개 (100만~150만 사이 최적화)
+        const PARTICLE_COUNT = 1200000; // 120만 개
         const WATERFALL_WIDTH = 40;
         const WATERFALL_HEIGHT = 60;
         const WATERFALL_DEPTH = 15;
@@ -59,11 +49,11 @@
 
         const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // 성능을 위해 픽셀 비율 제한
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         document.body.appendChild(renderer.domElement);
 
         // --------------------------------------------------------
-        // 3. 쉐이더 코드 작성 (Mega Shader)
+        // 3. 쉐이더 코드 작성 (Mega Shader + fBM Clumping + Bounce Interaction)
         // --------------------------------------------------------
         const vertexShader = `
             uniform float uTime;
@@ -89,8 +79,6 @@
                 vec3 l = 1.0 - g;
                 vec3 i1 = min( g.xyz, l.zxy );
                 vec3 i2 = max( g.xyz, l.zxy );
-                vec3 x1 = x0 - i1 + 1.0 * C.xxx;
-                vec3 x2 = x0 - i2 + 2.0 * C.xxx;
                 vec3 x3 = x0 - 1.0 + 3.0 * C.xxx;
                 i = mod(i, 289.0 ); 
                 vec4 p = permute( permute( permute( 
@@ -127,25 +115,43 @@
                                             dot(p2,x2), dot(p3,x3) ) );
             }
 
+            // fBM function for large scale clumping
+            float fbm(vec3 p) {
+                float v = 0.0;
+                float a = 0.5;
+                vec3 shift = vec3(100.0);
+                // Rotate to reduce axial bias
+                mat3 rot = mat3(cos(0.5), sin(0.5), 0.0, -sin(0.5), cos(0.5), 0.0, 0.0, 0.0, 1.0);
+                for (int i = 0; i < 4; i++) {
+                    v += a * snoise(p);
+                    p = rot * p * 2.0 + shift;
+                    a *= 0.5;
+                }
+                return v;
+            }
+
             void main() {
-                // 1. 기본 낙하 연산 (느리고 웅장하게, 기본 속도의 30% 수준)
+                // 1. 낙하 연산 (웅장하게, 기본 속도의 30%)
                 float fallSpeed = 0.03;
                 float life = fract(aPhase - uTime * fallSpeed);
-                
                 vec3 pos = aOffset;
-                // 위에서 아래로 떨어지도록 Y 좌표 재계산
                 pos.y = ${WATERFALL_HEIGHT.toFixed(1)} / 2.0 - life * ${WATERFALL_HEIGHT.toFixed(1)};
 
-                // 2. fBM 노이즈를 통한 덩어리감 및 물결(Flow) 연산
-                // Y축 위치와 시간에 기반하여 X, Z 축으로 일렁이게 만듦
-                float noiseScale = 0.15;
-                float n1 = snoise(vec3(pos.x * noiseScale, pos.y * noiseScale, uTime * 0.1));
-                float n2 = snoise(vec3(pos.x * noiseScale + 10.0, pos.y * noiseScale, uTime * 0.1));
+                // 2. fBM Clumping (이미지 0의 밀도 재현)
+                // XZ 평면에서 큰 스케일 노이즈로 덩어리 형성
+                float clumpingNoise = fbm(vec3(pos.x * 0.05, pos.y * 0.02, uTime * 0.05));
                 
-                pos.x += n1 * 1.5;
-                pos.z += n2 * 1.5;
+                // 폭포수가 덩어리 중심으로 모이도록 유도
+                float noiseClump = smoothstep(0.0, 0.4, abs(clumpingNoise));
+                pos.x += noiseClump * sign(clumpingNoise) * 1.5;
+                pos.z += noiseClump * sign(clumpingNoise) * 0.5;
+                
+                // fBM 기반의 유기적인 흐름(Flow) 추가
+                float flowNoise = fbm(vec3(pos.x * 0.1, pos.y * 0.1, uTime * 0.1));
+                pos.x += flowNoise * 0.5;
+                pos.z += flowNoise * 0.3;
 
-                // 3. 인터랙션: 돌에 부딪히는 물보라(Splash)
+                // 3. 인터랙션: 산산조각 Bounce Up (격렬하게 솟구침)
                 float timeSinceImpact = uTime - uImpactTime;
                 float flash = 0.0;
                 
@@ -154,45 +160,53 @@
                     float impactRadius = 4.0;
                     
                     if (dist < impactRadius) {
-                        // 바위에 부딪혀 위와 양옆으로 솟구치는 물리력
-                        float force = (impactRadius - dist) / impactRadius;
+                        // 충돌 시 위와 양옆으로 솟구치는 격렬한 바운스 물리력
+                        float force = smoothstep(impactRadius, 0.0, dist) * 2.0;
                         
-                        // 바깥쪽(X, Z)과 위쪽(Y)으로 튕겨나가는 벡터
+                        // 바깥쪽(X, Z)과 위쪽(Y)으로 확산되는 벡터
                         vec3 dir = normalize(pos - uImpactPos + vec3(0.0, 2.0, 0.0)); 
                         
                         // 바운스 및 감쇠 애니메이션
-                        float splashAnim = exp(-timeSinceImpact * 2.0) * sin(timeSinceImpact * 8.0);
+                        float splashAnim = exp(-timeSinceImpact * 3.0) * sin(timeSinceImpact * 10.0);
                         
-                        pos += dir * force * splashAnim * 3.0;
+                        pos += dir * force * splashAnim * 5.0; // 격렬한 바운스
                         
-                        // 타격감(Flash) - 충돌 직후 가장 밝고 서서히 감쇠
-                        flash = force * exp(-timeSinceImpact * 3.0);
+                        // 타격 플래시 (충돌 직전 가장 밝고 하얗게)
+                        flash = force * exp(-timeSinceImpact * 4.0);
                     }
                 }
 
-                // 4. 형태 변형: 빛의 실선(Streak) 만들기
-                // InstancedMesh의 기본 형태를 세로로 길게 늘림
+                // 4. 형태 변형: 빛의 실선(Streak) - Plane 세로로 극대화
                 vec3 scaledPosition = position;
-                scaledPosition.x *= 0.1; // 가로는 얇게
-                scaledPosition.y *= aScale * 2.0; // 세로는 길게
+                // PlaneGeometry의 기본 가로세로를 극단적으로 늘려 실선화
+                scaledPosition.x *= 0.05; // 매우 얇게
+                scaledPosition.y *= aScale * 5.0; // 매우 길게
                 
                 vec3 finalPos = pos + scaledPosition;
 
-                // 5. 컬러 톤앤매너 설정 (Deep Blue, Cyan, Magenta)
-                vec3 deepBlue = vec3(0.01, 0.05, 0.2);
-                vec3 cyan = vec3(0.0, 0.6, 1.0);
-                vec3 magenta = vec3(0.7, 0.1, 0.5);
+                // 5. 컬러 융합 및 Additive Blending (이미지 1 청아함 재현)
+                vec3 deepBlue = vec3(0.01, 0.05, 0.2); // 깊은 배경 블루
+                vec3 cyan = vec3(0.0, 0.6, 1.0);      // 청아한 시안
+                vec3 magenta = vec3(0.6, 0.1, 0.4);   // 은은한 마젠타
 
-                // 노이즈를 활용한 자연스러운 색상 믹스
-                float colorMix = snoise(vec3(pos.x * 0.1, pos.y * 0.05, uTime * 0.05));
-                vec3 baseColor = mix(deepBlue, cyan, smoothstep(-0.5, 0.5, colorMix));
-                vec3 finalColor = mix(baseColor, magenta, smoothstep(0.6, 1.0, colorMix));
+                // 노이즈와 낙하 위치를 결합한 자연스러운 컬러 그라데이션
+                float colorNoise = fbm(vec3(pos.x * 0.1, pos.y * 0.05, uTime * 0.05));
+                float colorMixFactor = smoothstep(-0.5, 0.5, colorNoise);
+                
+                // 시안 베이스에 딥블루 믹싱
+                vec3 baseColor = mix(cyan, deepBlue, colorMixFactor);
+                
+                // 은은한 포인트 마젠타 추가 (이미지 1의 미묘한 변주)
+                vec3 finalColor = mix(baseColor, magenta, smoothstep(0.7, 1.0, colorMixFactor));
 
                 // 타격 시 하얗게 번쩍이는(Flash) 효과 합성
                 vColor = mix(finalColor, vec3(1.0, 1.0, 1.0), flash);
                 
                 // 위아래 경계선에서 자연스럽게 페이드 인/아웃
-                vAlpha = smoothstep(0.0, 0.1, life) * smoothstep(1.0, 0.8, life) * 0.6;
+                float fadeOut = smoothstep(0.0, 0.1, life) * smoothstep(1.0, 0.8, life);
+                
+                // Additive Blending을 위한 파티클 기본 밝기 설정
+                vAlpha = fadeOut * 0.6; // 파티클 밀도에 따라 조정 가능
 
                 vec4 mvPosition = modelViewMatrix * vec4(finalPos, 1.0);
                 gl_Position = projectionMatrix * mvPosition;
@@ -204,10 +218,12 @@
             varying float vAlpha;
 
             void main() {
-                // 부드러운 파티클 질감 (가장자리 페이드 아웃)
+                // 부드러운 실선 질감 (가장자리 가로 방향 페이드 아웃)
+                // vertexShader의 PlaneGeometry UV를 사용하지 않고 direct fade out
                 vec2 uv = gl_PointCoord; // if using points, or local uv if using mesh
                 float edge = 1.0 - smoothstep(0.0, 0.5, abs(vAlpha));
                 
+                // 칠흑 배경에 청아함을 위한 Additive Blending 결과물
                 gl_FragColor = vec4(vColor, vAlpha);
             }
         `;
@@ -215,8 +231,8 @@
         // --------------------------------------------------------
         // 4. 파티클(InstancedMesh) 생성 및 데이터 할당
         // --------------------------------------------------------
-        // 세로로 긴 실선 형태를 만들기 위한 기본 평면 지오메트리
-        const geometry = new THREE.PlaneGeometry(0.5, 3.0);
+        // 세로로 매우 긴 실선 형태를 만들기 위한 기본 평면 지오메트리
+        const geometry = new THREE.PlaneGeometry(0.5, 1.0); // 쉐이더에서 세로로 극대화
         
         const material = new THREE.ShaderMaterial({
             vertexShader: vertexShader,
@@ -227,7 +243,7 @@
                 uImpactTime: { value: -999 }
             },
             transparent: true,
-            depthWrite: false, // Additive Blending을 위한 필수 설정
+            depthWrite: false, // Additive Blending 필수
             blending: THREE.AdditiveBlending, // 파티클이 겹칠수록 밝게 타오름
             side: THREE.DoubleSide
         });
