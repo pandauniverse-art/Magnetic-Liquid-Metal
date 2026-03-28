@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>High-End Interactive Waterfall of Light (Organic Wave & 30k Particles)</title>
+    <title>High-End Interactive Waterfall of Light (Organic Curved Lines & Continuous Hold Interaction)</title>
     <style>
         body { margin: 0; padding: 0; overflow: hidden; background-color: #000000; touch-action: none; }
         canvas { display: block; width: 100vw; height: 100vh; }
@@ -21,10 +21,9 @@
         import * as THREE from 'three';
 
         // --------------------------------------------------------
-        // 1. 초기 설정
+        // 1. 초기 설정 및 변수 선언 (Hoisting 방지)
         // --------------------------------------------------------
-        // 사용자 요청: 현재(10만 개) 기준에서 30%로 감축 -> 30,000개
-        const PARTICLE_COUNT = 30000; 
+        const PARTICLE_COUNT = 30000; // 3만 개 (최적화 수치 유지)
         const WATERFALL_WIDTH = 50;
         const WATERFALL_HEIGHT = 70;
         const WATERFALL_DEPTH = 20;
@@ -38,11 +37,14 @@
         const planeMaterial = new THREE.MeshBasicMaterial({ visible: false });
         const interactionPlane = new THREE.Mesh(planeGeometry, planeMaterial);
 
+        // 인터랙션 상태 관리
+        let isInteracting = false;
+
         // --------------------------------------------------------
         // 2. 씬, 카메라, 렌더러
         // --------------------------------------------------------
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x000000);
+        scene.background = new THREE.Color(0x000000); // 칠흑 배경
         scene.add(interactionPlane);
 
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
@@ -54,12 +56,13 @@
         document.body.appendChild(renderer.domElement);
 
         // --------------------------------------------------------
-        // 3. 메가 쉐이더 (유기적인 웨이브 추가)
+        // 3. 메가 쉐이더 (라인 휘어짐 & 지속 상호작용 & 느린 반응)
         // --------------------------------------------------------
         const vertexShader = `
             uniform float uTime;
             uniform vec3 uImpactPos;
             uniform float uImpactTime;
+            uniform float uInteractingFlag; // 상호작용 중일 때 1.0, 아닐 때 0.0
             
             attribute vec3 aOffset;
             attribute float aPhase;
@@ -129,25 +132,29 @@
             }
 
             void main() {
-                // 낙하 계산 (기본 속도의 30%)
+                // 1. 기본 낙하 연산 (느리고 웅장하게, 30% 속도)
                 float fallSpeed = 0.03;
                 float life = fract(aPhase - uTime * fallSpeed);
                 vec3 pos = aOffset;
                 pos.y = ${WATERFALL_HEIGHT.toFixed(1)} / 2.0 - life * ${WATERFALL_HEIGHT.toFixed(1)};
 
-                // *** 사용자 요청: 유기적인 웨이브 추가 ***
-                // 일직선이 아니라 굽이치듯 흐르는 거대한 Sway 연산
-                float swayFrequency = 0.04; // 물결이 생기는 주기 (세로 방향)
-                float swaySpeed = 0.6;     // 물결이 움직이는 속도 (시간 방향)
-                float swayMagnitude = 4.0; // 물결이 휘어지는 크기
-
-                // 시간과 Y축 좌표를 기준으로 천천히 움직이는 Sway 계산
-                float swayX = sin(pos.y * swayFrequency + uTime * swaySpeed) * swayMagnitude;
+                // *** 핵심 업데이트 1: 라인 자체의 휘어짐 (곡선화) ***
+                // 지오메트리의 각 마디(position.y) 마다 서로 다른 노이즈 적용
+                float swayFrequency = 0.04; // 전체 물결 주기 (세로 방향)
+                float swaySpeed = 0.6;     // 물결 움직임 속도
+                float swayMagnitude = 4.0; // 전체 Sway 크기
                 
-                // Sway를 기본 좌표에 적용
-                pos.x += swayX;
+                // 각 정점의 로컬 Y 좌표를 이용해 미세한 굴곡(Curve) 계산
+                float localSwayFreq = 0.2; // 실선 내 미세 곡선 주기
+                float localSwayMag = 1.0;   // 실선 내 미세 곡선 크기
+                float curveNoise = fbm(vec3(pos.x * 0.1, pos.y * swayFrequency + position.y * localSwayFreq, uTime * swaySpeed * 0.5));
+                float curveSway = curveNoise * localSwayMag;
 
-                // --- Maintain Clumping/Flow --- (기존의 미세 노이즈 유지)
+                // 거대한 Sway와 미세한 Curve 결합
+                float swayX = sin(pos.y * swayFrequency + uTime * swaySpeed) * swayMagnitude;
+                pos.x += swayX + curveSway; // 라인 자체가 물결 곡선을 그림
+
+                // --- Maintain Clumping/Flow --- (덩어리감 유지)
                 float clumpingNoise = fbm(vec3(pos.x * 0.05, pos.y * 0.02, uTime * 0.05));
                 float noiseClump = smoothstep(0.0, 0.4, abs(clumpingNoise));
                 pos.x += noiseClump * sign(clumpingNoise) * 2.0;
@@ -156,30 +163,43 @@
                 float flowNoise = fbm(vec3(pos.x * 0.1, pos.y * 0.1, uTime * 0.1));
                 pos.x += flowNoise * 0.5;
 
-                // 타격 인터랙션 바운스
-                float timeSinceImpact = uTime - uImpactTime;
+                // *** 핵심 업데이트 2 & 3: 지속적인 상호작용 & 느린 반응 ***
+                // 클릭 유지 시 마우스 따라가며 웅장하게 반응
+                float timeSinceStart = uTime - uImpactTime;
                 float flash = 0.0;
                 
-                if (timeSinceImpact > 0.0 && timeSinceImpact < 2.5) {
+                // 상호작용 중일 때만 반응
+                if (uInteractingFlag > 0.5) {
                     float dist = length(pos - uImpactPos);
-                    float impactRadius = 5.0;
+                    float impactRadius = 5.0; // 반발 반경
                     
                     if (dist < impactRadius) {
-                        float force = smoothstep(impactRadius, 0.0, dist) * 2.5;
+                        // 거리 기반 힘 (느리게 형성)
+                        float force = smoothstep(impactRadius, 0.0, dist) * min(timeSinceStart * 0.5, 1.0);
+                        
+                        // 바깥쪽(X, Z)과 위쪽(Y)으로 튕겨나가는 벡터
                         vec3 dir = normalize(pos - uImpactPos + vec3(0.0, 2.0, 0.0)); 
-                        float splashAnim = exp(-timeSinceImpact * 3.0) * sin(timeSinceImpact * 10.0);
-                        pos += dir * force * splashAnim * 6.0;
-                        flash = force * exp(-timeSinceImpact * 4.0);
+                        
+                        // *** 느린 반응 (이전 30% 수준) ***
+                        float splashAnim = exp(-timeSinceStart * 1.0) * sin(timeSinceStart * 3.0);
+                        
+                        // 힘의 크기를 크게 줄여 웅장하게 (6.0 -> 3.0, 더 줄일 수도 있음)
+                        pos += dir * force * splashAnim * 3.0;
+                        
+                        // 타격감(Flash) - 웅장함을 위해 더 은은하게
+                        flash = force * exp(-timeSinceStart * 1.0);
                     }
                 }
 
-                // 빛의 실선 형태 (개수가 줄었으므로 두께를 미세하게 증가)
+                // 4. 형태 변형: 빛의 실선(Streak) - Plane 세로로 극대화
                 vec3 scaledPosition = position;
-                scaledPosition.x *= 0.08; // 실선 두께 (0.06 -> 0.08로 증가)
+                // [수정] 휘어짐 디테일을 위해 지오메트리 크기를 키움
+                scaledPosition.x *= 0.1; // 실선 두께 (0.08 -> 0.1)
                 scaledPosition.y *= aScale * 6.0; // 실선 길이
+                
                 vec3 finalPos = pos + scaledPosition;
 
-                // 컬러톤
+                // 5. 컬러 융합 및 Additive Blending (딥 블루, 시안, 마젠타 톤)
                 vec3 deepBlue = vec3(0.01, 0.05, 0.3); 
                 vec3 cyan = vec3(0.0, 0.7, 1.0);      
                 vec3 magenta = vec3(0.6, 0.1, 0.4);   
@@ -189,6 +209,7 @@
                 vec3 baseColor = mix(cyan, deepBlue, colorMixFactor);
                 vec3 finalColor = mix(baseColor, magenta, smoothstep(0.7, 1.0, colorMixFactor));
 
+                // 타격 시 하얗게 번쩍이는(Flash) 효과 합성
                 vColor = mix(finalColor, vec3(1.0, 1.0, 1.0), flash);
                 
                 float fadeOut = smoothstep(0.0, 0.1, life) * smoothstep(1.0, 0.8, life);
@@ -208,25 +229,29 @@
         `;
 
         // --------------------------------------------------------
-        // 4. InstancedMesh 생성
+        // 4. InstancedMesh 생성 (곡선화를 위해 지오메트리 세그먼트 추가)
         // --------------------------------------------------------
-        const geometry = new THREE.PlaneGeometry(0.5, 1.0);
+        // 세로 지오메트리를 수십 등분(30 세그먼트)으로 나누어 부드러운 휘어짐 구현
+        const geometry = new THREE.PlaneGeometry(0.5, 1.0, 1, 30); 
+        
         const material = new THREE.ShaderMaterial({
             vertexShader: vertexShader,
             fragmentShader: fragmentShader,
             uniforms: {
                 uTime: { value: 0 },
                 uImpactPos: { value: new THREE.Vector3(0, -999, 0) },
-                uImpactTime: { value: -999 }
+                uImpactTime: { value: -999 },
+                uInteractingFlag: { value: 0.0 } // 0.0 (꺼짐), 1.0 (켜짐)
             },
             transparent: true,
             depthWrite: false, 
-            blending: THREE.AdditiveBlending,
+            blending: THREE.AdditiveBlending, // 파티클 겹칠수록 밝게
             side: THREE.DoubleSide
         });
 
         const instancedMesh = new THREE.InstancedMesh(geometry, material, PARTICLE_COUNT);
         
+        // [수정] 깃허브 프리징 방지 코드 유지
         instancedMesh.frustumCulled = false; 
 
         const offsets = new Float32Array(PARTICLE_COUNT * 3);
@@ -249,30 +274,69 @@
         scene.add(instancedMesh);
 
         // --------------------------------------------------------
-        // 5. 인터랙션 이벤트
+        // 5. 인터랙션 이벤트 처리 (지속 상호작용 구현)
         // --------------------------------------------------------
-        function onInteract(event) {
-            let clientX, clientY;
-            if (event.touches && event.touches.length > 0) {
-                clientX = event.touches[0].clientX; clientY = event.touches[0].clientY;
-            } else {
-                clientX = event.clientX; clientY = event.clientY;
-            }
-
+        // 정규화된 좌표 계산 및 레이캐스팅
+        function updatePointer(clientX, clientY) {
             pointer.x = (clientX / window.innerWidth) * 2 - 1;
             pointer.y = -(clientY / window.innerHeight) * 2 + 1;
-
             raycaster.setFromCamera(pointer, camera);
-            const intersects = raycaster.intersectObject(interactionPlane);
+        }
 
+        // 상호작용 시작
+        function onInteractStart(clientX, clientY) {
+            isInteracting = true;
+            updatePointer(clientX, clientY);
+            
+            // 쉐이더에 상호작용 시작 플래그 및 시간 전달
+            material.uniforms.uInteractingFlag.value = 1.0;
+            material.uniforms.uImpactTime.value = material.uniforms.uTime.value;
+            
+            // 초기 충돌 좌표 업데이트
+            const intersects = raycaster.intersectObject(interactionPlane);
             if (intersects.length > 0) {
                 material.uniforms.uImpactPos.value.copy(intersects[0].point);
-                material.uniforms.uImpactTime.value = material.uniforms.uTime.value;
             }
         }
 
-        window.addEventListener('click', onInteract);
-        window.addEventListener('touchstart', onInteract, { passive: false });
+        // 상호작용 이동 (지속 상호작용 핵심)
+        function onInteractMove(clientX, clientY) {
+            if (!isInteracting) return;
+            updatePointer(clientX, clientY);
+            
+            // 마우스/터치가 이동하면 반발 지점도 실시간으로 따라감
+            const intersects = raycaster.intersectObject(interactionPlane);
+            if (intersects.length > 0) {
+                material.uniforms.uImpactPos.value.copy(intersects[0].point);
+            }
+        }
+
+        // 상호작용 종료
+        function onInteractEnd() {
+            isInteracting = false;
+            // 쉐이더에 상호작용 중단 플래그 전달
+            material.uniforms.uInteractingFlag.value = 0.0;
+        }
+
+        // 마우스 이벤트 리스너
+        window.addEventListener('mousedown', (e) => onInteractStart(e.clientX, e.clientY));
+        window.addEventListener('mousemove', (e) => onInteractMove(e.clientX, e.clientY));
+        window.addEventListener('mouseup', onInteractEnd);
+        
+        // 터치 이벤트 리스너
+        window.addEventListener('touchstart', (e) => {
+            if (e.touches && e.touches.length > 0) {
+                onInteractStart(e.touches[0].clientX, e.touches[0].clientY);
+            }
+        }, { passive: false });
+        window.addEventListener('touchmove', (e) => {
+            if (e.touches && e.touches.length > 0) {
+                onInteractMove(e.touches[0].clientX, e.touches[0].clientY);
+            }
+        }, { passive: false });
+        window.addEventListener('touchend', onInteractEnd);
+
+        // 리사이즈 대응
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
